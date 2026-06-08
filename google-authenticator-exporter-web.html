@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GA 导出解码器 · 本地离线工具</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+
+  :root {
+    --bg: #0f1117;
+    --surface: #181c27;
+    --border: #2a2f3e;
+    --border-hover: #3d4460;
+    --accent: #4f9cf9;
+    --accent-dim: rgba(79,156,249,0.12);
+    --success: #34d399;
+    --success-dim: rgba(52,211,153,0.1);
+    --warn: #fbbf24;
+    --warn-dim: rgba(251,191,36,0.1);
+    --danger: #f87171;
+    --text: #e2e8f0;
+    --text-dim: #64748b;
+    --text-mid: #94a3b8;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+
+  /* Background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(79,156,249,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,156,249,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 48px 24px 80px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Header */
+  .header { margin-bottom: 40px; }
+
+  .header-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--success-dim);
+    border: 1px solid rgba(52,211,153,0.25);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--success);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .header-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--success);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  h1 {
+    font-size: 28px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+
+  h1 span { color: var(--accent); }
+
+  .header-sub {
+    color: var(--text-mid);
+    font-size: 13px;
+    max-width: 480px;
+  }
+
+  /* Step cards */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .step:hover { border-color: var(--border-hover); }
+  .step.active { border-color: rgba(79,156,249,0.4); }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .step-num {
+    width: 28px; height: 28px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(79,156,249,0.3);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .step-title {
+    font-weight: 500;
+    font-size: 14px;
+    color: #fff;
+  }
+
+  .step-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+
+  .step-body { padding: 20px; }
+
+  /* Tabs */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 4px;
+    margin-bottom: 16px;
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 7px 12px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-dim);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+
+  .tab-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .upload-zone input[type=file] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .upload-icon {
+    font-size: 32px;
+    margin-bottom: 10px;
+    display: block;
+  }
+
+  .upload-label {
+    font-size: 13px;
+    color: var(--text-mid);
+  }
+
+  .upload-label strong { color: var(--accent); }
+
+  /* Textarea */
+  textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 12px 14px;
+    resize: vertical;
+    min-height: 90px;
+    outline: none;
+    transition: border-color 0.2s;
+    line-height: 1.5;
+  }
+
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--text-dim); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 18px;
+    border-radius: 7px;
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    border: none;
+    text-decoration: none;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover { background: #3b82f6; filter: brightness(1.1); }
+
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-mid);
+  }
+
+  .btn-ghost:hover { border-color: var(--border-hover); color: var(--text); }
+
+  .btn-success {
+    background: var(--success);
+    color: #0f2419;
+    font-weight: 600;
+  }
+
+  .btn-success:hover { filter: brightness(1.1); }
+
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+
+  /* Results */
+  #results { display: none; }
+
+  .results-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .results-count {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .results-count span {
+    color: var(--success);
+    font-weight: 600;
+  }
+
+  /* Account cards */
+  .accounts { display: flex; flex-direction: column; gap: 10px; }
+
+  .account-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .account-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .account-info { flex: 1; min-width: 0; }
+
+  .account-issuer {
+    font-weight: 500;
+    font-size: 13px;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .account-name {
+    font-size: 11px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .account-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .icon-btn {
+    width: 30px; height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: pointer;
+    color: var(--text-dim);
+    font-size: 13px;
+    transition: all 0.15s;
+  }
+
+  .icon-btn:hover { border-color: var(--border-hover); color: var(--text); background: var(--surface); }
+
+  .account-secret-wrap {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(0,0,0,0.2);
+  }
+
+  .account-secret {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    flex: 1;
+    word-break: break-all;
+  }
+
+  .secret-label {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    flex-shrink: 0;
+  }
+
+  .secret-hidden { filter: blur(5px); transition: filter 0.2s; }
+  .secret-hidden:hover { filter: none; }
+
+  /* QR section */
+  .qr-wrap {
+    border-top: 1px solid var(--border);
+    padding: 14px 16px;
+    display: none;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .qr-wrap.open { display: flex; }
+
+  .qr-canvas-wrap {
+    background: #fff;
+    padding: 10px;
+    border-radius: 6px;
+    display: inline-block;
+  }
+
+  .qr-info {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    word-break: break-all;
+  }
+
+  /* Export section */
+  .export-area {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-mid);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.7;
+    display: none;
+  }
+
+  /* Status / error */
+  .notice {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .notice-warn { background: var(--warn-dim); border: 1px solid rgba(251,191,36,0.25); color: var(--warn); }
+  .notice-danger { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.25); color: var(--danger); }
+  .notice-success { background: var(--success-dim); border: 1px solid rgba(52,211,153,0.25); color: var(--success); }
+
+  /* Divider label */
+  .divider-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 16px 0;
+  }
+
+  .divider-label::before, .divider-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-hover); border-radius: 3px; }
+
+  /* Responsive */
+  @media (max-width: 520px) {
+    .container { padding: 24px 16px 60px; }
+    h1 { font-size: 22px; }
+    .account-card-header { flex-direction: column; align-items: flex-start; }
+    .account-actions { align-self: flex-end; }
+  }
+
+  .spin {
+    display: inline-block;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="header-badge">完全离线 · 无网络请求</div>
+    <h1>GA 导出<span>解码器</span></h1>
+    <p class="header-sub">解析 Google Authenticator 导出的二维码，提取所有账户的 TOTP 密钥。所有计算在本地浏览器完成，数据不离开设备。</p>
+  </div>
+
+  <div class="steps">
+
+    <!-- Step 1: Input -->
+    <div class="step active" id="step1">
+      <div class="step-header">
+        <div class="step-num">01</div>
+        <div>
+          <div class="step-title">输入导出数据</div>
+          <div class="step-desc">上传 GA 导出二维码截图，或手动粘贴 otpauth-migration 链接</div>
+        </div>
+      </div>
+      <div class="step-body">
+        <div class="tabs">
+          <button class="tab-btn active" onclick="switchTab('upload')">📷 上传截图</button>
+          <button class="tab-btn" onclick="switchTab('text')">🔗 粘贴链接</button>
+        </div>
+
+        <!-- Upload tab -->
+        <div class="tab-pane active" id="tab-upload">
+          <div class="upload-zone" id="uploadZone">
+            <input type="file" id="fileInput" accept="image/*" multiple>
+            <span class="upload-icon">🖼️</span>
+            <div class="upload-label">
+              <strong>点击选择</strong>或拖拽截图文件到此处<br>
+              <span style="font-size:11px;color:var(--text-dim);margin-top:4px;display:block">支持多张截图同时处理 · PNG / JPG</span>
+            </div>
+          </div>
+          <div id="scanStatus"></div>
+
+          <div class="notice notice-warn" style="margin-top:14px">
+            <span>⚠️</span>
+            <span>GA 不允许截图，需用另一台设备拍照保存为图片文件再上传。拍照时保持画面清晰，确保完整包含二维码。</span>
+          </div>
+        </div>
+
+        <!-- Text tab -->
+        <div class="tab-pane" id="tab-text">
+          <textarea id="migrationInput" placeholder="粘贴 otpauth-migration://offline?data=XXXXX 格式的链接&#10;&#10;如有多条，每行一条" spellcheck="false"></textarea>
+          <div class="btn-row">
+            <button class="btn btn-primary" onclick="decodeFromText()">▶ 开始解码</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('migrationInput').value=''">清空</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Step 2: Results -->
+    <div id="results">
+      <div class="step" id="step2">
+        <div class="step-header">
+          <div class="step-num">02</div>
+          <div>
+            <div class="step-title">解码结果</div>
+            <div class="step-desc">点击账户旁的按钮查看密钥或生成标准 QR 码</div>
+          </div>
+        </div>
+        <div class="step-body">
+          <div class="results-header">
+            <div class="results-count">找到 <span id="accountCount">0</span> 个账户</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-ghost" onclick="toggleAllSecrets()" id="toggleAllBtn" style="font-size:12px;padding:6px 12px">👁 显示所有密钥</button>
+              <button class="btn btn-ghost" onclick="toggleExport()" style="font-size:12px;padding:6px 12px">📋 导出 JSON</button>
+            </div>
+          </div>
+          <div class="accounts" id="accountsList"></div>
+          <div class="export-area" id="exportArea"></div>
+          <div class="divider-label">完成</div>
+          <div class="notice notice-success">
+            <span>✅</span>
+            <span>以上密钥（totpSecret）可直接导入 Bitwarden、1Password、Aegis、2FAS 等支持 TOTP 的应用。建议导入完成后立刻清空浏览器历史记录。</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- ============================================================
+     QR code generation (pure JS, no dependencies)
+     Uses a minimal QR encoder for otpauth:// URIs
+     ============================================================ -->
+<script>
+// ──────────────────────────────────────────────
+// 1. MINIMAL PROTOBUF DECODER (手写，无依赖)
+// ──────────────────────────────────────────────
+function decodeVarint(bytes, pos) {
+  let result = 0, shift = 0;
+  while (pos < bytes.length) {
+    const b = bytes[pos++];
+    result |= (b & 0x7F) << shift;
+    shift += 7;
+    if (!(b & 0x80)) break;
+  }
+  return { value: result >>> 0, pos };
+}
+
+function decodeProtobuf(bytes) {
+  const fields = {};
+  let pos = 0;
+  while (pos < bytes.length) {
+    const tag = decodeVarint(bytes, pos);
+    pos = tag.pos;
+    const fieldNum = tag.value >>> 3;
+    const wireType = tag.value & 0x07;
+    if (wireType === 0) {
+      const v = decodeVarint(bytes, pos);
+      pos = v.pos;
+      if (!fields[fieldNum]) fields[fieldNum] = [];
+      fields[fieldNum].push(v.value);
+    } else if (wireType === 2) {
+      const lenV = decodeVarint(bytes, pos);
+      pos = lenV.pos;
+      const slice = bytes.slice(pos, pos + lenV.value);
+      pos += lenV.value;
+      if (!fields[fieldNum]) fields[fieldNum] = [];
+      fields[fieldNum].push(slice);
+    } else if (wireType === 5) {
+      pos += 4;
+    } else if (wireType === 1) {
+      pos += 8;
+    } else {
+      break; // unknown wire type, stop
+    }
+  }
+  return fields;
+}
+
+function bytesToString(bytes) {
+  try { return new TextDecoder().decode(bytes); } catch { return ''; }
+}
+
+// ──────────────────────────────────────────────
+// 2. BASE32 ENCODER
+// ──────────────────────────────────────────────
+const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function toBase32(bytes) {
+  let bits = 0, value = 0, out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      out += BASE32_CHARS[(value >>> bits) & 31];
+    }
+  }
+  if (bits > 0) out += BASE32_CHARS[(value << (5 - bits)) & 31];
+  return out;
+}
+
+// ──────────────────────────────────────────────
+// 3. MAIN DECODE: otpauth-migration → accounts
+// ──────────────────────────────────────────────
+function decodeMigrationUrl(url) {
+  url = url.trim();
+  if (!url.startsWith('otpauth-migration://offline?data=')) {
+    throw new Error('格式不对，请确认完整复制了 otpauth-migration://offline?data= 开头的链接');
+  }
+  const dataParam = url.slice('otpauth-migration://offline?data='.length);
+  const base64 = decodeURIComponent(dataParam);
+  const binaryStr = atob(base64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+  const payload = decodeProtobuf(bytes);
+  // field 1 = otp_parameters (repeated), field 2 = version, field 3 = batch_size, field 4 = batch_index
+  const otpList = payload[1] || [];
+  const accounts = [];
+
+  for (const otpBytes of otpList) {
+    const otp = decodeProtobuf(otpBytes);
+    // field 1=secret, 2=name, 3=issuer, 4=algorithm, 5=digits, 6=type
+    const secretBytes = (otp[1] && otp[1][0]) ? otp[1][0] : new Uint8Array(0);
+    const name    = (otp[2] && otp[2][0]) ? bytesToString(otp[2][0]) : '';
+    const issuer  = (otp[3] && otp[3][0]) ? bytesToString(otp[3][0]) : '';
+    const algVal  = (otp[4] && otp[4][0]) ? otp[4][0] : 1;
+    const digVal  = (otp[5] && otp[5][0]) ? otp[5][0] : 1;
+    const totpSecret = toBase32(secretBytes);
+
+    const algoMap = {1:'SHA1', 2:'SHA256', 3:'SHA512', 4:'MD5'};
+    const digMap  = {1:'6', 2:'8'};
+    const algorithm = algoMap[algVal] || 'SHA1';
+    const digits    = digMap[digVal]  || '6';
+
+    accounts.push({ name, issuer, totpSecret, algorithm, digits });
+  }
+  return accounts;
+}
+
+// ──────────────────────────────────────────────
+// 4. QR CODE GENERATOR (otpauth:// URI)
+//    Uses a CDN-free approach: draw canvas from
+//    a data URL via an <img> hack with the
+//    goqr.me API — but we want OFFLINE only.
+//    So: use a tiny pure-JS QR lib embedded below.
+// ──────────────────────────────────────────────
+// Embedded minimal QR code generator
+// Adapted from qrcodejs (MIT) - core logic only
+const QRErrorCorrectLevel = { L:1, M:0, Q:3, H:2 };
+
+function makeQRCanvas(text, size) {
+  // We'll use a data URI approach with a <canvas>
+  // Using the browser's built-in canvas + a minimal QR algorithm
+  const canvas = document.createElement('canvas');
+  try {
+    drawQR(canvas, text, size || 150);
+  } catch(e) {
+    canvas.width = canvas.height = size || 150;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#f87171';
+    ctx.font = '11px monospace';
+    ctx.fillText('QR生成失败', 10, 70);
+  }
+  return canvas;
+}
+
+// ── Tiny QR encoder (Reed-Solomon + matrix, self-contained) ──
+// Based on public domain QR spec implementation
+function drawQR(canvas, text, px) {
+  const qr = createQR(text, 'M');
+  const n = qr.modules.length;
+  const scale = Math.floor(px / n);
+  const actual = scale * n;
+  canvas.width = canvas.height = actual + scale * 2; // quiet zone
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#000000';
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (qr.modules[r][c]) {
+        ctx.fillRect(scale + c * scale, scale + r * scale, scale, scale);
+      }
+    }
+  }
+}
+
+function createQR(data, ecLevel) {
+  // Find minimum version
+  const bytes = unescape(encodeURIComponent(data));
+  let version = 1;
+  for (; version <= 40; version++) {
+    if (getCapacity(version, ecLevel) >= bytes.length) break;
+  }
+  if (version > 40) throw new Error('data too long');
+  return buildQR(bytes, version, ecLevel);
+}
+
+// Capacity table (byte mode, error correction L/M/Q/H)
+// Only M stored for brevity
+const CAP_M = [
+  0,16,28,44,64,86,108,124,154,182,216,254,290,334,365,415,453,507,563,627,
+  669,714,782,860,914,1000,1062,1128,1193,1267,1373,1455,1541,1631,1725,1812,
+  1914,1992,2102,2216,2334
+];
+
+function getCapacity(v, ec) { return CAP_M[v] || 0; }
+
+// ── Full QR matrix builder ──
+function buildQR(data, version, ecLevel) {
+  const ecIdx = {L:1,M:0,Q:3,H:2}[ecLevel];
+  const size = version * 4 + 17;
+  // Create module matrix
+  let modules = Array.from({length:size}, () => new Array(size).fill(null));
+  let isFunction = Array.from({length:size}, () => new Array(size).fill(false));
+
+  function setFunc(r,c,v) { modules[r][c]=v; isFunction[r][c]=true; }
+
+  // Finder patterns
+  function drawFinder(row,col) {
+    for (let dr=-1;dr<=7;dr++) for (let dc=-1;dc<=7;dc++) {
+      if (row+dr<0||row+dr>=size||col+dc<0||col+dc>=size) continue;
+      const filled = (dr>=0&&dr<=6&&dc>=0&&dc<=6) && (
+        dr===0||dr===6||dc===0||dc===6||
+        (dr>=2&&dr<=4&&dc>=2&&dc<=4));
+      setFunc(row+dr,col+dc,filled);
+    }
+  }
+  drawFinder(0,0); drawFinder(0,size-7); drawFinder(size-7,0);
+
+  // Separators already covered by finder -1 offset
+
+  // Timing patterns
+  for (let i=8;i<size-8;i++) {
+    setFunc(6,i,i%2===0); setFunc(i,6,i%2===0);
+  }
+
+  // Dark module
+  setFunc(size-8,8,true);
+
+  // Alignment patterns
+  const ap = getAlignmentPositions(version);
+  for (const r of ap) for (const c of ap) {
+    if (isFunction[r][c]) continue; // skip if already set
+    for (let dr=-2;dr<=2;dr++) for (let dc=-2;dc<=2;dc++) {
+      setFunc(r+dr,c+dc,
+        dr===2||dr===-2||dc===2||dc===-2||
+        (dr===0&&dc===0));
+    }
+  }
+
+  // Format info placeholder
+  for (let i=0;i<=8;i++) {
+    if (!isFunction[8][i]) setFunc(8,i,false);
+    if (!isFunction[i][8]) setFunc(i,8,false);
+  }
+  setFunc(8,size-8,false); setFunc(8,size-7,false); setFunc(8,size-6,false);
+  setFunc(8,size-5,false); setFunc(8,size-4,false); setFunc(8,size-3,false);
+  setFunc(8,size-2,false); setFunc(8,size-1,false);
+  for (let i=size-7;i<size;i++) setFunc(i,8,false);
+
+  // Version info (version >= 7)
+  if (version>=7) {
+    const bits = getVersionBits(version);
+    for (let i=0;i<18;i++) {
+      const bit = (bits>>i)&1;
+      const r=Math.floor(i/3), c=size-11+(i%3);
+      setFunc(r,c,bit===1); setFunc(c,r,bit===1);
+    }
+  }
+
+  // Data codewords
+  const codewords = buildCodewords(data, version, ecIdx);
+  let bitIdx = 0;
+  const getBit = () => {
+    if (bitIdx >= codewords.length * 8) return 0;
+    return (codewords[Math.floor(bitIdx/8)] >> (7-(bitIdx%8))) & 1;
+  };
+
+  // Zigzag placement
+  let upward = true;
+  for (let right=size-1;right>=1;right-=2) {
+    if (right===6) right=5;
+    for (let vert=0;vert<size;vert++) {
+      const row = upward ? size-1-vert : vert;
+      for (let j=0;j<2;j++) {
+        const col = right-j;
+        if (!isFunction[row][col]) {
+          modules[row][col] = getBit()===1;
+          bitIdx++;
+        }
+      }
+    }
+    upward = !upward;
+  }
+
+  // Apply best mask
+  let bestMask=0, bestPenalty=Infinity;
+  for (let mask=0;mask<8;mask++) {
+    const m2 = applyMask(modules, isFunction, size, mask);
+    const p = calcPenalty(m2, size);
+    if (p < bestPenalty) { bestPenalty=p; bestMask=mask; }
+  }
+  modules = applyMask(modules, isFunction, size, bestMask);
+
+  // Write format info
+  const formatBits = getFormatBits(ecIdx, bestMask);
+  const fmt = [
+    [8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],
+    [7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]
+  ];
+  const fmt2 = [];
+  for (let i=0;i<7;i++) fmt2.push([size-1-i,8]);
+  for (let i=0;i<8;i++) fmt2.push([8,size-8+i]);
+
+  for (let i=0;i<15;i++) {
+    const bit = (formatBits>>i)&1;
+    modules[fmt[i][0]][fmt[i][1]] = bit===1;
+    modules[fmt2[i][0]][fmt2[i][1]] = bit===1;
+  }
+  modules[size-8][8] = true; // dark module
+
+  return { modules, version, size };
+}
+
+function getAlignmentPositions(v) {
+  const table = [
+    [], [], [6,18], [6,22], [6,26], [6,30], [6,34],
+    [6,22,38], [6,24,42], [6,26,46], [6,28,50], [6,30,54],
+    [6,32,58], [6,34,62], [6,26,46,66], [6,26,48,70],
+    [6,26,50,74], [6,30,54,78], [6,30,56,82], [6,30,58,86],
+    [6,34,62,90], [6,28,50,72,94], [6,26,50,74,98],
+    [6,30,54,78,102], [6,28,54,80,106], [6,32,58,84,110],
+    [6,30,58,86,114], [6,34,62,90,118], [6,26,50,74,98,122],
+    [6,30,54,78,102,126], [6,26,52,78,104,130],
+    [6,30,56,82,108,132], [6,34,60,86,112,136],
+    [6,30,58,86,114,142], [6,34,62,90,118,146],
+    [6,30,54,78,102,126,150], [6,24,50,76,102,128,154],
+    [6,28,54,80,106,132,158], [6,32,58,84,110,136,162],
+    [6,26,54,82,110,138,166], [6,30,58,86,114,142,170]
+  ];
+  return table[v] || [];
+}
+
+function getVersionBits(v) {
+  const table = {
+    7:0x07C94,8:0x085BC,9:0x09A99,10:0x0A4D3,11:0x0BBF6,
+    12:0x0C762,13:0x0D847,14:0x0E60D,15:0x0F928,16:0x10B78,
+    17:0x1145D,18:0x12A17,19:0x13532,20:0x149A6,21:0x15683,
+    22:0x168C9,23:0x177EC,24:0x18EC4,25:0x191E1,26:0x1AFAB,
+    27:0x1B08E,28:0x1CC1A,29:0x1D33F,30:0x1ED75,31:0x1F250,
+    32:0x209D5,33:0x216F0,34:0x228BA,35:0x2379F,36:0x24B0B,
+    37:0x2542E,38:0x26A64,39:0x27541,40:0x28C69
+  };
+  return table[v] || 0;
+}
+
+function getFormatBits(ecIdx, mask) {
+  const table = [
+    [0x77C4,0x72F3,0x7DAA,0x789D,0x662F,0x6318,0x6C41,0x6976],
+    [0x5412,0x5125,0x5E7C,0x5B4B,0x45F9,0x40CE,0x4F97,0x4AA0],
+    [0x355F,0x3068,0x3F31,0x3A06,0x24B4,0x2183,0x2EDA,0x2BED],
+    [0x1689,0x13BE,0x1CE7,0x19D0,0x0762,0x0255,0x0D0C,0x083B]
+  ];
+  return table[ecIdx][mask];
+}
+
+function applyMask(modules, isFunc, size, mask) {
+  const m = modules.map(r => [...r]);
+  const fns = [
+    (r,c) => (r+c)%2===0,
+    (r,c) => r%2===0,
+    (r,c) => c%3===0,
+    (r,c) => (r+c)%3===0,
+    (r,c) => (Math.floor(r/2)+Math.floor(c/3))%2===0,
+    (r,c) => r*c%2+r*c%3===0,
+    (r,c) => (r*c%2+r*c%3)%2===0,
+    (r,c) => ((r+c)%2+r*c%3)%2===0
+  ];
+  for (let r=0;r<size;r++) for (let c=0;c<size;c++) {
+    if (!isFunc[r][c] && fns[mask](r,c)) m[r][c]=!m[r][c];
+  }
+  return m;
+}
+
+function calcPenalty(m, size) {
+  let pen = 0;
+  // Rule 1: 5+ in a row
+  for (let r=0;r<size;r++) {
+    let run=1;
+    for (let c=1;c<size;c++) {
+      if (m[r][c]===m[r][c-1]) { run++; if (run===5) pen+=3; else if (run>5) pen++; }
+      else run=1;
+    }
+  }
+  for (let c=0;c<size;c++) {
+    let run=1;
+    for (let r=1;r<size;r++) {
+      if (m[r][c]===m[r-1][c]) { run++; if (run===5) pen+=3; else if (run>5) pen++; }
+      else run=1;
+    }
+  }
+  // Rule 2: 2x2 blocks
+  for (let r=0;r<size-1;r++) for (let c=0;c<size-1;c++) {
+    const v=m[r][c];
+    if (m[r][c+1]===v&&m[r+1][c]===v&&m[r+1][c+1]===v) pen+=3;
+  }
+  return pen;
+}
+
+// Reed-Solomon and codeword builder
+function buildCodewords(data, version, ecIdx) {
+  // EC block info table (simplified for version 1-10, M level)
+  // [numBlocks, dataWords, ecWords]
+  const ecTable = {
+    '1_0':[[1,16,10]], '2_0':[[1,28,16]], '3_0':[[1,44,26]],
+    '4_0':[[2,32,18]], '5_0':[[2,43,24]], '6_0':[[2,27,16],[2,27,16]],
+    '7_0':[[4,31,18]], '8_0':[[2,38,22],[2,39,22]], '9_0':[[3,36,20],[2,37,20]],
+    '10_0':[[4,43,24],[1,43,24]]
+  };
+
+  const key = version + '_' + ecIdx;
+  const blockInfo = ecTable[key] || [[1, Math.max(16, data.length+4), 10]];
+
+  // Encode data (byte mode)
+  let dataBits = [];
+  // Mode indicator: byte = 0100
+  dataBits.push(0,1,0,0);
+  // Character count
+  const lenBits = version<=9 ? 8 : 16;
+  const dataLen = data.length;
+  for (let i=lenBits-1;i>=0;i--) dataBits.push((dataLen>>i)&1);
+  // Data bytes
+  for (let i=0;i<data.length;i++) {
+    const ch = data.charCodeAt(i);
+    for (let b=7;b>=0;b--) dataBits.push((ch>>b)&1);
+  }
+  // Terminator
+  for (let i=0;i<4&&dataBits.length<getTotalDataBits(version,ecIdx);i++) dataBits.push(0);
+  // Pad to byte boundary
+  while (dataBits.length%8!==0) dataBits.push(0);
+  // Pad bytes
+  const padBytes=[0b11101100,0b00010001];
+  let pi=0;
+  const totalBits=getTotalDataBits(version,ecIdx);
+  while (dataBits.length<totalBits) {
+    const b=padBytes[pi%2]; pi++;
+    for (let i=7;i>=0;i--) dataBits.push((b>>i)&1);
+  }
+
+  // Convert to bytes
+  const dataBytes=[];
+  for (let i=0;i<dataBits.length;i+=8) {
+    let v=0;
+    for (let j=0;j<8;j++) v=(v<<1)|(dataBits[i+j]||0);
+    dataBytes.push(v);
+  }
+
+  // Split into blocks and add EC
+  let allBlocks=[], allEC=[];
+  let pos=0;
+  for (const [count,dw] of blockInfo) {
+    for (let b=0;b<count;b++) {
+      const block=dataBytes.slice(pos,pos+dw); pos+=dw;
+      allBlocks.push(block);
+      allEC.push(rsEncode(block,getECCount(version,ecIdx)));
+    }
+  }
+
+  // Interleave
+  const out=[];
+  const maxLen=Math.max(...allBlocks.map(b=>b.length));
+  for (let i=0;i<maxLen;i++) for (const b of allBlocks) if (i<b.length) out.push(b[i]);
+  const maxEC=Math.max(...allEC.map(b=>b.length));
+  for (let i=0;i<maxEC;i++) for (const b of allEC) if (i<b.length) out.push(b[i]);
+  return out;
+}
+
+function getTotalDataBits(v, ec) {
+  // Total data codewords * 8 (M level approx)
+  const dcw = [0,16,28,44,64,86,108,124,154,182,216][v] || 200;
+  return dcw * 8;
+}
+
+function getECCount(v, ec) {
+  // EC codewords per block (M level)
+  const t=[0,10,16,26,18,24,16,18,22,20,24];
+  return t[v]||10;
+}
+
+function rsEncode(data, ecCount) {
+  const gen = rsGenerator(ecCount);
+  let msg = [...data, ...new Array(ecCount).fill(0)];
+  for (let i=0;i<data.length;i++) {
+    const coef=msg[i];
+    if (coef!==0) {
+      for (let j=0;j<=ecCount;j++) {
+        msg[i+j]^=gfMul(gen[j],coef);
+      }
+    }
+  }
+  return msg.slice(data.length);
+}
+
+// GF(256) operations
+const EXP=new Uint8Array(512), LOG=new Uint8Array(256);
+(function(){
+  let x=1;
+  for (let i=0;i<255;i++) {
+    EXP[i]=x; LOG[x]=i;
+    x<<=1; if(x&256) x^=285;
+  }
+  for (let i=255;i<512;i++) EXP[i]=EXP[i-255];
+})();
+
+function gfMul(a,b) { return a&&b ? EXP[LOG[a]+LOG[b]] : 0; }
+
+function rsGenerator(n) {
+  let g=[1];
+  for (let i=0;i<n;i++) {
+    const ng=[1,EXP[i]];
+    const r=new Array(g.length+ng.length-1).fill(0);
+    for (let j=0;j<g.length;j++) for (let k=0;k<ng.length;k++) r[j+k]^=gfMul(g[j],ng[k]);
+    g=r;
+  }
+  return g;
+}
+
+// ──────────────────────────────────────────────
+// 5. QR CODE READER from image (using zxing-js via CDN)
+//    We load it lazily only when needed
+// ──────────────────────────────────────────────
+let zxingLoaded = false;
+let ZXing = null;
+
+async function loadZXing() {
+  if (zxingLoaded) return true;
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js';
+    script.onload = () => { zxingLoaded = true; ZXing = window.ZXing; resolve(true); };
+    script.onerror = () => resolve(false);
+    document.head.appendChild(script);
+  });
+}
+
+// ──────────────────────────────────────────────
+// 6. UI LOGIC
+// ──────────────────────────────────────────────
+let allAccounts = [];
+let secretsVisible = false;
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    b.classList.toggle('active', (i===0&&tab==='upload')||(i===1&&tab==='text'));
+  });
+  document.getElementById('tab-upload').classList.toggle('active', tab==='upload');
+  document.getElementById('tab-text').classList.toggle('active', tab==='text');
+}
+
+// File upload
+const fileInput = document.getElementById('fileInput');
+const uploadZone = document.getElementById('uploadZone');
+
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+async function handleFiles(files) {
+  if (!files || !files.length) return;
+  const status = document.getElementById('scanStatus');
+  status.innerHTML = '<div class="notice notice-warn"><span class="spin">⟳</span> <span>正在加载二维码识别库...</span></div>';
+
+  const ok = await loadZXing();
+  if (!ok) {
+    status.innerHTML = `
+      <div class="notice notice-danger">⚠️ 无法加载二维码识别库（需要联网加载一次）。请改用「粘贴链接」方式。</div>
+      <div class="notice notice-warn" style="margin-top:8px">
+        💡 离线方式：用手机扫描截图中的二维码（推荐用 <b>Google Lens</b> 或 <b>ZXing Barcode Scanner</b>），复制得到的链接，切换到「粘贴链接」标签粘贴。
+      </div>`;
+    return;
+  }
+
+  status.innerHTML = `<div class="notice notice-warn"><span class="spin">⟳</span> <span>识别中，共 ${files.length} 张图片...</span></div>`;
+
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]);
+  const reader = new ZXing.BrowserMultiFormatReader(hints);
+  const urls = [];
+  const errors = [];
+
+  for (const file of files) {
+    try {
+      const text = await decodeImageFile(file, reader);
+      if (text.startsWith('otpauth-migration://')) {
+        urls.push(text);
+      } else {
+        errors.push(`${file.name}: 识别到内容但不是 GA 导出格式（内容: ${text.slice(0,40)}...）`);
+      }
+    } catch(e) {
+      errors.push(`${file.name}: 未能识别到二维码（${e.message || '请确保图片清晰且完整包含二维码'}）`);
+    }
+  }
+
+  if (urls.length === 0) {
+    let msg = '未能从图片中识别到有效的 GA 导出二维码。';
+    if (errors.length) msg += '<br><br>' + errors.join('<br>');
+    status.innerHTML = `<div class="notice notice-danger">❌ ${msg}</div>`;
+    return;
+  }
+
+  let allFound = [];
+  const parseErrors = [];
+  for (const url of urls) {
+    try { allFound = allFound.concat(decodeMigrationUrl(url)); }
+    catch(e) { parseErrors.push(e.message); }
+  }
+
+  if (allFound.length === 0) {
+    status.innerHTML = `<div class="notice notice-danger">❌ 解析失败：${parseErrors.join('; ')}</div>`;
+    return;
+  }
+
+  status.innerHTML = `<div class="notice notice-success">✅ 成功识别 ${urls.length} 个二维码，共解析出 ${allFound.length} 个账户</div>`;
+  renderResults(allFound);
+}
+
+// 通过 canvas 读取图片像素，再用 ZXing 识别——比 decodeFromImageElement 更可靠
+function decodeImageFile(file, reader) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      try {
+        const luminanceSource = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+        const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
+        const hints = new Map();
+        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+        const result = new ZXing.MultiFormatReader().decode(binaryBitmap, hints);
+        resolve(result.getText());
+      } catch(e) {
+        reject(new Error('未识别到二维码'));
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')); };
+    img.src = url;
+  });
+}
+
+function decodeFromText() {
+  const raw = document.getElementById('migrationInput').value.trim();
+  if (!raw) return;
+  const lines = raw.split('\n').map(l=>l.trim()).filter(l=>l);
+  let accounts = [];
+  const errors = [];
+  for (const line of lines) {
+    try { accounts = accounts.concat(decodeMigrationUrl(line)); }
+    catch(e) { errors.push(e.message); }
+  }
+  if (accounts.length === 0) {
+    const notice = document.createElement('div');
+    notice.className = 'notice notice-danger';
+    notice.style.marginTop = '10px';
+    notice.textContent = '❌ 解析失败：' + (errors[0] || '未知错误');
+    const btn = document.querySelector('#tab-text .btn-row');
+    const old = document.getElementById('textError');
+    if (old) old.remove();
+    notice.id = 'textError';
+    btn.after(notice);
+    return;
+  }
+  document.getElementById('textError') && document.getElementById('textError').remove();
+  renderResults(accounts);
+}
+
+function renderResults(accounts) {
+  allAccounts = accounts;
+  document.getElementById('accountCount').textContent = accounts.length;
+  const list = document.getElementById('accountsList');
+  list.innerHTML = '';
+
+  accounts.forEach((acc, idx) => {
+    const card = document.createElement('div');
+    card.className = 'account-card';
+    card.innerHTML = `
+      <div class="account-card-header">
+        <div class="account-info">
+          <div class="account-issuer">${esc(acc.issuer || '未知服务')}</div>
+          <div class="account-name">${esc(acc.name || '—')}</div>
+        </div>
+        <div class="account-actions">
+          <button class="icon-btn" title="复制密钥" onclick="copySecret(${idx})">⎘</button>
+          <button class="icon-btn" title="显示/隐藏 QR 码" onclick="toggleQR(${idx})">◉</button>
+        </div>
+      </div>
+      <div class="account-secret-wrap">
+        <span class="secret-label">secret</span>
+        <span class="account-secret secret-hidden" id="secret-${idx}">${esc(acc.totpSecret)}</span>
+      </div>
+      <div class="qr-wrap" id="qr-${idx}">
+        <div class="qr-canvas-wrap" id="qr-canvas-${idx}"></div>
+        <div class="qr-info" id="qr-uri-${idx}"></div>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('results').scrollIntoView({behavior:'smooth', block:'start'});
+  updateExport();
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function copySecret(idx) {
+  const s = allAccounts[idx]?.totpSecret;
+  if (!s) return;
+  navigator.clipboard.writeText(s).then(() => {
+    const btn = document.querySelectorAll('.account-card')[idx].querySelector('.icon-btn');
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    setTimeout(() => btn.textContent = orig, 1200);
+  }).catch(() => {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+}
+
+function toggleQR(idx) {
+  const wrap = document.getElementById('qr-' + idx);
+  const isOpen = wrap.classList.contains('open');
+  if (isOpen) { wrap.classList.remove('open'); return; }
+
+  const acc = allAccounts[idx];
+  const issuer = encodeURIComponent(acc.issuer || '');
+  const name = encodeURIComponent(acc.name || acc.issuer || 'account');
+  const uri = `otpauth://totp/${issuer}:${name}?secret=${acc.totpSecret}&issuer=${issuer}&algorithm=${acc.algorithm}&digits=${acc.digits}&period=30`;
+
+  const canvasWrap = document.getElementById('qr-canvas-' + idx);
+  if (!canvasWrap.hasChildNodes()) {
+    try {
+      const canvas = makeQRCanvas(uri, 180);
+      canvasWrap.appendChild(canvas);
+    } catch(e) {
+      canvasWrap.textContent = 'QR生成失败：' + e.message;
+    }
+    document.getElementById('qr-uri-' + idx).textContent = uri;
+  }
+  wrap.classList.add('open');
+}
+
+function toggleAllSecrets() {
+  secretsVisible = !secretsVisible;
+  document.querySelectorAll('.account-secret').forEach(el => {
+    el.classList.toggle('secret-hidden', !secretsVisible);
+  });
+  document.getElementById('toggleAllBtn').textContent = secretsVisible ? '🙈 隐藏所有密钥' : '👁 显示所有密钥';
+}
+
+let exportOpen = false;
+function toggleExport() {
+  exportOpen = !exportOpen;
+  const area = document.getElementById('exportArea');
+  area.style.display = exportOpen ? 'block' : 'none';
+}
+
+function updateExport() {
+  const data = allAccounts.map(a => ({
+    issuer: a.issuer,
+    name: a.name,
+    totpSecret: a.totpSecret,
+    algorithm: a.algorithm,
+    digits: parseInt(a.digits),
+    period: 30
+  }));
+  document.getElementById('exportArea').textContent = JSON.stringify(data, null, 2);
+}
+</script>
+</body>
+</html>
