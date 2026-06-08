@@ -2,7 +2,7 @@
 解析 Google Authenticator 导出的二维码，提取所有账户的 TOTP 密钥。所有计算在本地浏览器完成，数据不离开设备。显示密钥/导出JSOS
 
 ## 在线使用：
-https://kukukeji8.github.io/google-authenticator-exporter-web/
+<a href="https://kukukeji8.github.io/google-authenticator-exporter-web" target="_blank" rel="noopener noreferrer">https://kukukeji8.github.io/google-authenticator-exporter-web</a>
 
 ## 如何使用
 在线使用或者下载index.html这个文件，双击直接在浏览器打开即可。
