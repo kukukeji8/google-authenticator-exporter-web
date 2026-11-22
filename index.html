@@ -514,13 +514,14 @@
         <div class="step-num">01</div>
         <div>
           <div class="step-title">输入导出数据</div>
-          <div class="step-desc">上传 GA 导出二维码截图，或手动粘贴 otpauth-migration 链接</div>
+          <div class="step-desc">使用摄像头扫码、上传图片，或粘贴 otpauth-migration 链接</div>
         </div>
       </div>
       <div class="step-body">
         <div class="tabs">
-          <button class="tab-btn active" onclick="switchTab('upload')">📷 上传截图</button>
-          <button class="tab-btn" onclick="switchTab('text')">🔗 粘贴链接</button>
+          <button class="tab-btn active" data-tab="upload" onclick="switchTab('upload')">📷 上传截图</button>
+          <button class="tab-btn" data-tab="camera" onclick="switchTab('camera')">📹 摄像头扫码</button>
+          <button class="tab-btn" data-tab="text" onclick="switchTab('text')">🔗 粘贴链接</button>
         </div>
 
         <!-- Upload tab -->
@@ -538,6 +539,19 @@
           <div class="notice notice-warn" style="margin-top:14px">
             <span>⚠️</span>
             <span>GA 不允许截图，需用另一台设备拍照保存为图片文件再上传。拍照时保持画面清晰，确保完整包含二维码。</span>
+          </div>
+        </div>
+
+        <div class="tab-pane" id="tab-camera">
+          <div class="btn-row">
+            <button class="btn btn-primary" id="cameraStart" type="button" onclick="startCamera()">开启摄像头</button>
+            <button class="btn btn-ghost" id="cameraStop" type="button" onclick="pauseCamera()" disabled>暂停</button>
+            <button class="btn btn-ghost" type="button" onclick="resetCameraBatch()">清空扫码进度</button>
+          </div>
+          <video id="cameraPreview" muted playsinline hidden aria-label="摄像头预览"
+            style="width:100%;max-height:55vh;object-fit:contain;background:#111;border-radius:8px;margin-top:12px"></video>
+          <div class="notice notice-warn" id="cameraStatus" role="status" style="margin-top:12px">
+            对准另一台设备上的 GA 导出码。若显示多张，请逐张扫描。
           </div>
         </div>
 
@@ -664,6 +678,10 @@ function toBase32(bytes) {
 // 3. MAIN DECODE: otpauth-migration → accounts
 // ──────────────────────────────────────────────
 function decodeMigrationUrl(url) {
+  return decodeMigrationBatch(url).accounts;
+}
+
+function decodeMigrationBatch(url) {
   url = url.trim();
   if (!url.startsWith('otpauth-migration://offline?data=')) {
     throw new Error('格式不对，请确认完整复制了 otpauth-migration://offline?data= 开头的链接');
@@ -696,7 +714,12 @@ function decodeMigrationUrl(url) {
 
     accounts.push({ name, issuer, totpSecret, algorithm, digits });
   }
-  return accounts;
+  return {
+    accounts,
+    size: payload[3]?.[0] || 1,
+    index: payload[4]?.[0] ?? 0,
+    id: payload[5]?.[0]
+  };
 }
 
 // ──────────────────────────────────────────────
@@ -775,11 +798,13 @@ let allAccounts = [];
 let secretsVisible = false;
 
 function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    b.classList.toggle('active', (i===0&&tab==='upload')||(i===1&&tab==='text'));
+  document.querySelectorAll('.tab-btn').forEach(button => {
+    button.classList.toggle('active', button.dataset.tab === tab);
   });
-  document.getElementById('tab-upload').classList.toggle('active', tab==='upload');
-  document.getElementById('tab-text').classList.toggle('active', tab==='text');
+  document.querySelectorAll('.tab-pane').forEach(pane => {
+    pane.classList.toggle('active', pane.id === 'tab-' + tab);
+  });
+  if (tab !== 'camera' && cameraStart.disabled) pauseCamera();
 }
 
 // File upload
@@ -863,6 +888,189 @@ async function handleFiles(files) {
   renderResults(allFound);
 }
 
+function decodeQRCanvas(canvas, reader) {
+  const { width, height } = canvas;
+  const { data } = canvas.getContext('2d').getImageData(0, 0, width, height);
+  const luminance = new Uint8ClampedArray(width * height);
+  for (let pixel = 0, offset = 0; pixel < luminance.length; pixel++, offset += 4) {
+    luminance[pixel] = (data[offset] + 2 * data[offset + 1] + data[offset + 2]) / 4;
+  }
+
+  const source = new ZXing.RGBLuminanceSource(luminance, width, height);
+  for (const binarizer of [ZXing.HybridBinarizer, ZXing.GlobalHistogramBinarizer]) {
+    try {
+      const bitmap = new ZXing.BinaryBitmap(new binarizer(source));
+      return reader.decodeWithState(bitmap).getText();
+    } catch (error) {
+      if (!(error instanceof ZXing.NotFoundException)) throw error;
+    }
+  }
+  return null;
+}
+
+const cameraPreview = document.getElementById('cameraPreview');
+const cameraStart = document.getElementById('cameraStart');
+const cameraStop = document.getElementById('cameraStop');
+const cameraStatus = document.getElementById('cameraStatus');
+let cameraSession = 0;
+let cameraTimer;
+let cameraBatch;
+
+function setCameraStatus(message, kind = 'warn') {
+  cameraStatus.className = 'notice notice-' + kind;
+  if (cameraStatus.textContent !== message) cameraStatus.textContent = message;
+}
+
+function stopCamera() {
+  cameraSession++;
+  clearTimeout(cameraTimer);
+  cameraPreview.srcObject?.getTracks().forEach(track => track.stop());
+  cameraPreview.srcObject = null;
+  cameraPreview.hidden = true;
+  cameraStart.disabled = false;
+  cameraStop.disabled = true;
+}
+
+function pauseCamera() {
+  stopCamera();
+  const progress = cameraBatch ? `（已扫 ${cameraBatch.parts.size}/${cameraBatch.size} 张）` : '';
+  setCameraStatus('摄像头已暂停' + progress + '，重新开启可继续扫码。');
+}
+
+function resetCameraBatch() {
+  cameraBatch = undefined;
+  setCameraStatus(cameraPreview.srcObject ? '请对准 Google Authenticator 导出码。' : '请开启摄像头开始新的扫描。');
+}
+
+function collectCameraCode(text) {
+  if (!text.trim().startsWith('otpauth-migration://')) {
+    setCameraStatus('识别到了二维码。请对准 Google Authenticator「转移账号 → 导出账号」生成的二维码。');
+    return false;
+  }
+
+  let part;
+  try {
+    part = decodeMigrationBatch(text);
+    if (!part.accounts.length || !Number.isInteger(part.size) ||
+        !Number.isInteger(part.index) || part.index < 0 || part.index >= part.size) {
+      throw new Error('Invalid migration batch');
+    }
+  } catch {
+    setCameraStatus('读取到了导出码，但无法解析账号。请切换到下一张或重新导出。', 'danger');
+    return false;
+  }
+
+  if (!cameraBatch) cameraBatch = { id: part.id, size: part.size, parts: new Map() };
+  if (cameraBatch.id !== part.id || cameraBatch.size !== part.size) {
+    setCameraStatus('这张码属于另一批导出。请继续扫原批次，或清空进度后开始新批次。');
+    return false;
+  }
+
+  if (!cameraBatch.parts.has(part.index)) cameraBatch.parts.set(part.index, part.accounts);
+  const scanned = cameraBatch.parts.size;
+  if (scanned < cameraBatch.size) {
+    setCameraStatus(`已扫 ${scanned}/${cameraBatch.size} 张。请在另一台设备上切换到下一张。`, 'success');
+    return false;
+  }
+
+  const accounts = [...cameraBatch.parts.entries()].sort(([a], [b]) => a - b).flatMap(([, items]) => items);
+  cameraBatch = undefined;
+  stopCamera();
+  setCameraStatus(`已扫完 ${scanned} 张二维码，共解析出 ${accounts.length} 个账号。摄像头已关闭。`, 'success');
+  renderResults(accounts);
+  return true;
+}
+
+async function startCamera() {
+  if (cameraStart.disabled) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setCameraStatus('摄像头不可用。请使用 HTTPS 网页，或改用上传图片。', 'danger');
+    return;
+  }
+
+  const session = ++cameraSession;
+  cameraStart.disabled = true;
+  cameraStop.disabled = false;
+  setCameraStatus('正在开启摄像头，请允许浏览器访问。');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    if (session !== cameraSession) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    cameraPreview.srcObject = stream;
+    stream.getVideoTracks().forEach(track => track.addEventListener('ended', () => {
+      if (session !== cameraSession) return;
+      stopCamera();
+      setCameraStatus('摄像头已断开。可以重新开启并继续扫码。', 'danger');
+    }));
+    cameraPreview.hidden = false;
+    await cameraPreview.play();
+    const loaded = await loadZXing();
+    if (session !== cameraSession) return;
+    if (!loaded) {
+      stopCamera();
+      setCameraStatus('无法加载二维码识别库。请检查网络后重试。', 'danger');
+      return;
+    }
+    scanCamera(session);
+  } catch (error) {
+    if (session !== cameraSession) return;
+    stopCamera();
+    const message = error.name === 'NotAllowedError'
+      ? '未获得摄像头权限。请在浏览器的网站设置中允许使用摄像头。'
+      : '无法开启摄像头。请检查设备是否连接或被其他应用占用。';
+    setCameraStatus(message, 'danger');
+  }
+}
+
+function scanCamera(session) {
+  const hints = new Map([
+    [ZXing.DecodeHintType.TRY_HARDER, true],
+    [ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]]
+  ]);
+  const reader = new ZXing.MultiFormatReader();
+  reader.setHints(hints);
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  setCameraStatus(cameraBatch
+    ? `已扫 ${cameraBatch.parts.size}/${cameraBatch.size} 张，请继续扫码。`
+    : '请对准导出码，让二维码尽量占满预览画面并保持清晰。');
+
+  function scanFrame() {
+    if (session !== cameraSession) return;
+    try {
+      const { videoWidth, videoHeight } = cameraPreview;
+      if (cameraPreview.readyState >= 2 && videoWidth && videoHeight) {
+        const scale = Math.min(1, 1920 / Math.max(videoWidth, videoHeight));
+        const width = Math.max(1, Math.round(videoWidth * scale));
+        const height = Math.max(1, Math.round(videoHeight * scale));
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
+        }
+        context.drawImage(cameraPreview, 0, 0, width, height);
+        const text = decodeQRCanvas(canvas, reader);
+        if (text && collectCameraCode(text)) return;
+      }
+    } catch {
+      stopCamera();
+      setCameraStatus('无法处理摄像头画面。请重新开启摄像头，或改用上传图片。', 'danger');
+      return;
+    }
+    cameraTimer = setTimeout(scanFrame, 300);
+  }
+  scanFrame();
+}
+
+window.addEventListener('pagehide', stopCamera);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && cameraStart.disabled) pauseCamera();
+});
+
 // 多策略增强识别：针对 GA 账号多时二维码密度高的情况
 function decodeImageFile(file, reader) {
   return new Promise((resolve, reject) => {
@@ -870,27 +1078,6 @@ function decodeImageFile(file, reader) {
     const img = new Image();
     img.onload = () => {
       URL.revokeObjectURL(url);
-
-      // 尝试用某个 canvas 解码，返回结果或 null
-      function tryDecode(canvas) {
-        const { width, height } = canvas;
-        const { data } = canvas.getContext('2d').getImageData(0, 0, width, height);
-        const luminance = new Uint8ClampedArray(width * height);
-        for (let pixel = 0, offset = 0; pixel < luminance.length; pixel++, offset += 4) {
-          luminance[pixel] = (data[offset] + 2 * data[offset + 1] + data[offset + 2]) / 4;
-        }
-
-        const source = new ZXing.RGBLuminanceSource(luminance, width, height);
-        for (const binarizer of [ZXing.HybridBinarizer, ZXing.GlobalHistogramBinarizer]) {
-          try {
-            const bitmap = new ZXing.BinaryBitmap(new binarizer(source));
-            return reader.decodeWithState(bitmap).getText();
-          } catch (error) {
-            if (!(error instanceof ZXing.NotFoundException)) throw error;
-          }
-        }
-        return null;
-      }
 
       // 对 canvas 做对比度增强（拉伸灰度直方图）
       function enhanceContrast(srcCanvas) {
@@ -934,19 +1121,19 @@ function decodeImageFile(file, reader) {
       // 按顺序尝试多种策略，第一个成功就返回
       const strategies = [
         // 原始尺寸
-        () => { const c = scaleCanvas(1); return tryDecode(c); },
+        () => { const c = scaleCanvas(1); return decodeQRCanvas(c, reader); },
         // 原始尺寸 + 对比度增强
-        () => { const c = enhanceContrast(scaleCanvas(1)); return tryDecode(c); },
+        () => { const c = enhanceContrast(scaleCanvas(1)); return decodeQRCanvas(c, reader); },
         // 放大 1.5x（小图手机拍摄场景）
-        () => { const c = scaleCanvas(1.5); return tryDecode(c); },
+        () => { const c = scaleCanvas(1.5); return decodeQRCanvas(c, reader); },
         // 放大 2x
-        () => { const c = scaleCanvas(2); return tryDecode(c); },
+        () => { const c = scaleCanvas(2); return decodeQRCanvas(c, reader); },
         // 放大 2x + 对比度增强
-        () => { const c = enhanceContrast(scaleCanvas(2)); return tryDecode(c); },
+        () => { const c = enhanceContrast(scaleCanvas(2)); return decodeQRCanvas(c, reader); },
         // 缩小 0.75x（超大图可能反而更好识别）
-        () => { const c = scaleCanvas(0.75); return tryDecode(c); },
+        () => { const c = scaleCanvas(0.75); return decodeQRCanvas(c, reader); },
         // 缩小 0.5x + 对比度增强
-        () => { const c = enhanceContrast(scaleCanvas(0.5)); return tryDecode(c); },
+        () => { const c = enhanceContrast(scaleCanvas(0.5)); return decodeQRCanvas(c, reader); },
       ];
 
       for (const strategy of strategies) {
