@@ -758,7 +758,11 @@ async function loadZXing() {
   return new Promise((resolve) => {
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js';
-    script.onload = () => { zxingLoaded = true; ZXing = window.ZXing; resolve(true); };
+    script.onload = () => {
+      ZXing = window.ZXing;
+      zxingLoaded = Boolean(ZXing && ZXing.RGBLuminanceSource && ZXing.MultiFormatReader);
+      resolve(zxingLoaded);
+    };
     script.onerror = () => resolve(false);
     document.head.appendChild(script);
   });
@@ -789,7 +793,11 @@ uploadZone.addEventListener('drop', e => {
   uploadZone.classList.remove('drag-over');
   handleFiles(e.dataTransfer.files);
 });
-fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+fileInput.addEventListener('change', () => {
+  const files = Array.from(fileInput.files);
+  fileInput.value = '';
+  handleFiles(files);
+});
 
 async function handleFiles(files) {
   if (!files || !files.length) return;
@@ -811,17 +819,18 @@ async function handleFiles(files) {
   const hints = new Map();
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]);
-  const reader = new ZXing.BrowserMultiFormatReader(hints);
+  const reader = new ZXing.MultiFormatReader();
+  reader.setHints(hints);
   const urls = [];
   const errors = [];
 
   for (const file of files) {
     try {
-      const text = await decodeImageFile(file, reader);
+      const text = (await decodeImageFile(file, reader)).trim();
       if (text.startsWith('otpauth-migration://')) {
         urls.push(text);
       } else {
-        errors.push(`${file.name}: 识别到内容但不是 GA 导出格式（内容: ${text.slice(0,40)}...）`);
+        errors.push(`${file.name}: 识别到内容，请选择 Google Authenticator「转移账号 → 导出账号」生成的二维码`);
       }
     } catch(e) {
       errors.push(`${file.name}: 未能识别到二维码（${e.message || '请确保图片清晰且完整包含二维码'}）`);
@@ -829,9 +838,12 @@ async function handleFiles(files) {
   }
 
   if (urls.length === 0) {
-    let msg = '未能从图片中识别到有效的 GA 导出二维码。';
-    if (errors.length) msg += '<br><br>' + errors.join('<br>');
-    status.innerHTML = `<div class="notice notice-danger">❌ ${msg}</div>`;
+    status.innerHTML = '<div class="notice notice-danger">❌ 未能从图片中识别到有效的 GA 导出二维码。</div>';
+    for (const error of errors) {
+      const detail = document.createElement('div');
+      detail.textContent = error;
+      status.firstElementChild.appendChild(detail);
+    }
     return;
   }
 
@@ -861,21 +873,22 @@ function decodeImageFile(file, reader) {
 
       // 尝试用某个 canvas 解码，返回结果或 null
       function tryDecode(canvas) {
-        const hints = new Map();
-        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-        const mr = new ZXing.MultiFormatReader();
-        // 策略1: HybridBinarizer
-        try {
-          const ls = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-          const bb = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(ls));
-          return mr.decode(bb, hints).getText();
-        } catch(_) {}
-        // 策略2: GlobalHistogramBinarizer（对高密度/低对比度图更稳定）
-        try {
-          const ls = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
-          const bb = new ZXing.BinaryBitmap(new ZXing.GlobalHistogramBinarizer(ls));
-          return mr.decode(bb, hints).getText();
-        } catch(_) {}
+        const { width, height } = canvas;
+        const { data } = canvas.getContext('2d').getImageData(0, 0, width, height);
+        const luminance = new Uint8ClampedArray(width * height);
+        for (let pixel = 0, offset = 0; pixel < luminance.length; pixel++, offset += 4) {
+          luminance[pixel] = (data[offset] + 2 * data[offset + 1] + data[offset + 2]) / 4;
+        }
+
+        const source = new ZXing.RGBLuminanceSource(luminance, width, height);
+        for (const binarizer of [ZXing.HybridBinarizer, ZXing.GlobalHistogramBinarizer]) {
+          try {
+            const bitmap = new ZXing.BinaryBitmap(new binarizer(source));
+            return reader.decodeWithState(bitmap).getText();
+          } catch (error) {
+            if (!(error instanceof ZXing.NotFoundException)) throw error;
+          }
+        }
         return null;
       }
 
@@ -906,11 +919,15 @@ function decodeImageFile(file, reader) {
 
       // 按指定缩放比绘制到新 canvas
       function scaleCanvas(scale) {
-        const w = Math.round(img.naturalWidth * scale);
-        const h = Math.round(img.naturalHeight * scale);
+        const boundedScale = Math.min(scale, 3000 / Math.max(img.naturalWidth, img.naturalHeight));
+        const w = Math.max(1, Math.round(img.naturalWidth * boundedScale));
+        const h = Math.max(1, Math.round(img.naturalHeight * boundedScale));
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
         return c;
       }
 
@@ -936,7 +953,10 @@ function decodeImageFile(file, reader) {
         try {
           const result = strategy();
           if (result) { resolve(result); return; }
-        } catch(_) {}
+        } catch (error) {
+          reject(new Error('二维码识别组件处理图片失败，建议刷新页面后重试', { cause: error }));
+          return;
+        }
       }
 
       reject(new Error('未识别到二维码（已尝试多种增强策略）'));
